@@ -89,7 +89,7 @@ class GitData:
                 ]
 
                 # 定义对应的值
-                values = ['好转坏验收', '好转坏入库', '验收', '入库']
+                values = ['好转坏验收', '好转坏入库', '验收', '验收入库']
 
                 # 使用 numpy.select 设置计费类型
                 WAT_df['计费类型'] = np.select(conditions, values, default='未定义')
@@ -103,8 +103,6 @@ class GitData:
             BF_df = BF_df[BF_df['货位编码'].str.contains(rep)]
             if BF_df.shape[0] > 0:
                 BF_df['计费类型'] = BF_df['交易数量'].map(lambda x: '入库' if x > 0 else '出库')
-        bf_df1 = source_df[(source_df['子库类型'] == '正常子库') & (
-                (source_df['交易类型'] == 'SP_S20') | (source_df['交易类型'] == 'SP_OB005'))]
         bf_df1 = source_df[(source_df['子库类型'] == '正常子库') & (source_df['交易类型'].isin(['SP_S20', 'SP_OB005']))]
 
         if bf_df1.shape[0] > 0:
@@ -121,8 +119,11 @@ class GitData:
             return None
         # 把“交易数量”识为绝对值
         dfs['交易数量'] = dfs['交易数量'].abs()
-        rep = re.compile(r'入库|出库|好转坏验收|好转坏入库|报废出库')
-        t1_df = dfs[dfs['计费类型'].str.contains(rep)]
+        # rep=re.compile(r'^(入库|出库|好转坏验收|好转坏入库|报废出库)$')
+        # t1_df=dfs[dfs['计费类型'].str.contains(rep)]
+        t1_df = dfs[dfs['计费类型'].isin(['入库', '出库', '好转坏验收', '好转坏入库', '报废出库'])]
+        t11 = pd.DataFrame()
+        a1 = pd.DataFrame()
         if t1_df.shape[0] > 0:
             t1_df.loc[:, :].fillna('', inplace=True)
             # 透视表
@@ -132,39 +133,63 @@ class GitData:
             # 把行索引转为列
             t1.reset_index(inplace=True)
             t1.loc[:, '项数'] = 1
-            t1 = t1.pivot_table(index=['交易日期', '计费类型'], values=['项数', '交易数量'], aggfunc='sum')
-            t1.reset_index(inplace=True)
+            t11 = t1.pivot_table(index=['交易日期', '计费类型'], values=['项数', '交易数量'], aggfunc='sum')
+            t11.reset_index(inplace=True)
+            a1 = t1.pivot_table(
+                index=['物料编码', '子库编码', '货位编码', '对方子库编码', '对方货位编码', '交易日期', '计费类型',
+                       '交易来源单据号'], values=['项数', '交易数量'], aggfunc='sum')
+            a1.reset_index(inplace=True)
 
-        t2_df = dfs[dfs['计费类型'] == '验收']
-        t2 = pd.DataFrame()
+        t2_df = dfs[dfs['计费类型'].isin(['验收', '验收入库'])]
+        t22 = pd.DataFrame()
+        a2 = pd.DataFrame()
         if t2_df.shape[0] > 0:
             t2_df.loc[:, :].fillna('', inplace=True)
             t2_df.loc[:, '项数'] = 1
-            t2 = t2_df.pivot_table(index=['交易日期', '计费类型'], values=['项数', '交易数量'], aggfunc='sum')
-            t2.reset_index(inplace=True)
-        ts = pd.concat([t1, t2], ignore_index=True)
+            t22 = t2_df.pivot_table(index=['交易日期', '计费类型'], values=['项数', '交易数量'], aggfunc='sum')
+            t22.reset_index(inplace=True)
+            a2 = t2_df.pivot_table(
+                index=['物料编码', '子库编码', '货位编码', '对方子库编码', '对方货位编码', '交易日期', '计费类型',
+                       '交易来源单据号'], values=['项数', '交易数量'], aggfunc='sum')
+            a2.reset_index(inplace=True)
+
+        ts = pd.concat([t11, t22], ignore_index=True)
+        a3 = pd.concat([a1, a2], ignore_index=True)
+
+        # 写入EXCEL
         if ts.shape[0] > 0:
+            # 对交易数量和项数汇总并插入到第一行
+            s = pd.concat(
+                [pd.Series({'交易日期': '', '计费类型': '总计：'}), ts.agg({'交易数量': 'sum', '项数': 'sum'})], axis=0)
+            ts.loc[-1] = s
+            ts.index = ts.index + 1
+            ts = ts.sort_index()
+            # 按日期排序
+            ts = ts.sort_values(by=['交易日期'])
+
             result_folder = os.path.join(common.base_path, '结果')
             excel_folder = os.path.join(result_folder, 'Excel', datetime.date.today().strftime('%Y-%m-%d'))
             html_folder = os.path.join(result_folder, 'Html', datetime.date.today().strftime('%Y-%m-%d'))
             save_path = [excel_folder, html_folder]
-
             create_folder_if_not_exists(save_path)
             t = datetime.datetime.now().strftime("%H%M%S")
             writes = pd.ExcelWriter(os.path.join(save_path[0], f"结果{t}.xlsx"))
             ts.to_excel(writes, index=False)
 
-        t3_df = dfs[dfs['计费类型'] != '无']
-        t3 = t3_df.pivot_table(
-            index=['物料编码', '子库编码', '货位编码', '对方子库编码', '对方货位编码', '交易日期', '计费类型',
-                   '交易来源单据号',
-                   '项数'], values='交易数量', aggfunc='sum')
-        if t3_df.shape[0] > 0:
-            t3.reset_index(inplace=True)
-            t3['项数'] = 1
-            t3 = t3.pivot_table(index='子库编码', values=['项数', '交易数量'], aggfunc='sum')
-            t3.reset_index(inplace=True)
-            t3.to_excel(writes, index=False, startrow=0, startcol=8)
+        if a3.shape[0] > 0:
+            a3.reset_index(inplace=True)
+            a3.loc[:, :].fillna('', inplace=True)
+            a3 = a3.pivot_table(index='子库编码', values=['项数', '交易数量'], aggfunc='sum')
+            a3.reset_index(inplace=True)
+
+            # 对交易数量和项数汇总并插入到第一行
+            s = pd.concat(
+                [pd.Series({'子库编码': '总计：'}), a3.agg({'交易数量': 'sum', '项数': 'sum'})], axis=0)
+
+            a3.loc[-1] = s
+            a3.index = a3.index + 1
+            a3 = a3.sort_index()
+            a3.to_excel(writes, index=False, startrow=0, startcol=8)
             writes.close()
 
         # 写入html表格并打开
@@ -176,8 +201,8 @@ class GitData:
             table1.set_global_opts(title_opts=ComponentTitleOpts(title="保税坏件货量计算",
                                                                  subtitle=(datetime.datetime.now().strftime(
                                                                      '%Y-%m-%d %H:%M:%S'))))
-        if t3.shape[0] > 0:
-            table2.add(t3.columns.tolist(), t3.values.tolist())
+        if a3.shape[0] > 0:
+            table2.add(a3.columns.tolist(), a3.values.tolist())
             table2.set_global_opts(
                 title_opts=ComponentTitleOpts(subtitle=(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))))
         page.add(table1, table2)
