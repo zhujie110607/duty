@@ -102,7 +102,17 @@ class GitData:
             rep = re.compile(r'20500|20700|2500|2700|BF$|W500$')
             BF_df = BF_df[BF_df['货位编码'].str.contains(rep)]
             if BF_df.shape[0] > 0:
-                BF_df['计费类型'] = BF_df['交易数量'].map(lambda x: '入库' if x > 0 else '出库')
+                conditions = [
+                    (BF_df['交易来源单据号'].str.startswith('HT')) & (BF_df['交易数量'] > 0),
+                    (~BF_df['交易来源单据号'].str.startswith('HT')) & (BF_df['交易数量'] > 0),
+                    (BF_df['交易数量'] < 0)
+                ]
+                # 定义对应的值
+                values = ['报废入库', '入库', '出库']
+                # 使用 numpy.select 设置计费类型
+                BF_df['计费类型'] = np.select(conditions, values, default='未定义')
+                # BF_df['计费类型'] = BF_df['交易数量'].map(lambda x: '入库' if x > 0 else '出库')
+
         bf_df1 = source_df[(source_df['子库类型'] == '正常子库') & (source_df['交易类型'].isin(['SP_S20', 'SP_OB005']))]
 
         if bf_df1.shape[0] > 0:
@@ -140,7 +150,7 @@ class GitData:
                        '交易来源单据号'], values=['项数', '交易数量'], aggfunc='sum')
             a1.reset_index(inplace=True)
 
-        t2_df = dfs[dfs['计费类型'].isin(['验收', '验收入库'])]
+        t2_df = dfs[dfs['计费类型'].isin(['验收', '验收入库','报废入库'])]
         t22 = pd.DataFrame()
         a2 = pd.DataFrame()
         if t2_df.shape[0] > 0:
